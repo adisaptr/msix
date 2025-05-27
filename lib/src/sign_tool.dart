@@ -120,40 +120,56 @@ class SignTool {
   Future<void> sign() async {
     _logger.trace('signing');
 
-    if (!_config.certificatePath.isNull || _config.signToolOptions != null) {
-      var signtoolPath =
-          '${_config.msixToolkitPath}/Redist.${_config.architecture}/signtool.exe';
+    String signToolPath = p.join(_config.msixToolkitPath, 'signtool.exe');
+    final signToolOptions = getSignToolOptions();
+    bool isFullSignToolCommand =
+        signToolOptions[0].toLowerCase().contains('signtool');
 
-      List<String> signtoolOptions = [];
-
-      if (_config.signToolOptions != null) {
-        signtoolOptions = _config.signToolOptions!;
-      } else {
-        signtoolOptions = [
-          '/v',
-          '/fd',
-          'SHA256',
-          '/a',
-          '/f',
-          _config.certificatePath!,
-          if (extension(_config.certificatePath!) == '.pfx') '/p',
-          if (extension(_config.certificatePath!) == '.pfx')
-            _config.certificatePassword!,
-          '/tr',
-          'http://timestamp.digicert.com'
-        ];
-      }
-
-      ProcessResult signProcess = await Process.run(signtoolPath, [
-        'sign',
-        ...signtoolOptions,
-        _config.msixPath,
-      ]);
-
-      if (signProcess.exitCode != 0) {
-        _logger.stderr(signProcess.stdout);
-        throw signProcess.stderr;
-      }
-    }
+    // ignore: avoid_single_cascade_in_expression_statements
+    await Process.run(
+        isFullSignToolCommand ? signToolOptions[0] : signToolPath, [
+      if (!isFullSignToolCommand) 'sign',
+      ...signToolOptions.skip(isFullSignToolCommand ? 1 : 0),
+      _config.msixPath,
+    ])
+      ..exitOnError();
   }
+
+  /// Returns the options necessary for [sign].
+  ///
+  /// This method accounts for whether the config already has signtool options
+  /// that [isCustomSignCommand] and the config's certificate type.
+  List<String> getSignToolOptions() {
+    List<String> signToolOptions = _config.signToolOptions ?? ['/v'];
+
+    if (isCustomSignCommand(_config.signToolOptions)) {
+      signToolOptions = _config.signToolOptions!;
+    } else if (_config.certificatePath != null) {
+      switch (extension(_config.certificatePath!).toLowerCase()) {
+        case '.pfx':
+          signToolOptions.addAll(['/p', _config.certificatePassword!]);
+          break;
+        default:
+          signToolOptions.addAll(['/a']);
+      }
+
+      signToolOptions.addAll([
+        '/fd',
+        'SHA256',
+        '/td',
+        'SHA256',
+        '/tr',
+        'http://timestamp.digicert.com',
+        '/f',
+        _config.certificatePath!,
+      ]);
+    }
+
+    return signToolOptions;
+  }
+
+  static isCustomSignCommand(List<String>? signToolOptions) =>
+      signToolOptions != null &&
+      signToolOptions.isNotEmpty &&
+      signToolOptions.containsArguments(['/sha1', '/n', '/r', '/i', '/f']);
 }
